@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TalkBook 激活码生成器</title>
+<title>TalkBook & WeFlow 激活码生成器</title>
+<!-- CryptoJS for HMAC-SHA256 -->
+<script src="https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -16,18 +18,29 @@
     padding: 40px 16px;
     color: #1a1a1a;
   }
+  .container {
+    width: 100%;
+    max-width: 480px;
+    display: flex;
+    flex-direction: column;
+    gap:24px;
+  }
   .card {
     background: #fff;
     border-radius: 16px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.06);
     padding: 32px;
     width: 100%;
-    max-width: 480px;
   }
   h1 {
     font-size: 20px;
     font-weight: 700;
     margin-bottom: 4px;
+  }
+  h2 {
+    font-size:17px;
+    font-weight:600;
+    margin-bottom:4px;
   }
   .sub {
     color: #888;
@@ -55,7 +68,7 @@
   input:focus, select:focus { border-color: #22c55e; }
   .row { display: flex; gap: 12px; }
   .row > .field { flex: 1; }
-  .btn-row { display: flex; gap: 10px; margin: 20px 0 16px; }
+  .btn-row { display: flex; gap: 10px; margin: 20px 0 16px; flex-wrap: wrap; }
   button {
     flex: 1;
     padding: 11px;
@@ -69,6 +82,7 @@
   button:hover { opacity: 0.9; }
   .btn-primary { background: #22c55e; color: #fff; }
   .btn-secondary { background: #f0f0f0; color: #333; }
+  .btn-green-sm { background:#22c55e; color:#fff; padding:8px 12px; flex:none; }
   .result {
     background: #fafafa;
     border: 1px solid #eee;
@@ -80,11 +94,15 @@
     font-family: "Consolas", "Monaco", monospace;
     font-size: 14px;
     line-height: 1.8;
-    white-space: pre;
   }
-  .result:empty::before {
-    content: "生成的激活码会显示在这里";
-    color: #bbb;
+  .result-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin:6px 0;
+  }
+  .code-text{
+    flex:1;
   }
   .tip {
     margin-top: 12px;
@@ -92,18 +110,30 @@
     color: #999;
     text-align: center;
   }
+  .weflow-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 0;
+    font-family:Consolas, monospace;
+  }
+  .weflow-code{
+    flex:1;
+    font-size:16px;
+    color:#c0392b;
+  }
 </style>
 </head>
 <body>
+<div class="container">
+<!-- 第一块：TalkBook 激活码生成器 -->
 <div class="card">
   <h1>TalkBook 激活码生成器</h1>
-  <div class="sub">所有计算均在浏览器本地完成，不联网</div>
-
+  <div class="sub">所有计算均在浏览器本地完成，不联网，页面加载自动生成当日日/周/月卡</div>
   <div class="field">
     <label>激活日期</label>
     <input type="date" id="activated">
   </div>
-
   <div class="row">
     <div class="field">
       <label>套餐</label>
@@ -118,96 +148,201 @@
       <input type="number" id="count" value="1" min="1" max="100">
     </div>
   </div>
-
   <div class="btn-row">
-    <button class="btn-primary" onclick="doGenerate()">生成激活码</button>
+    <button class="btn-primary" onclick="doGenerate()">生成自选套餐</button>
+    <button class="btn-primary" onclick="generateAllPlans()">重新生成日/周/月卡</button>
     <button class="btn-secondary" onclick="copyAll()">复制全部</button>
   </div>
-
   <div class="result" id="result"></div>
   <div class="tip">格式 XXXX-XXXX-XXXX-XXXX · 与软件 license.py 解码逻辑对称</div>
 </div>
 
+<!-- 第二块：WeFlow 激活码生成器 -->
+<div class="card">
+  <h2>WeFlow 激活码生成器</h2>
+  <div class="sub">基于本地日期生成HMAC时间码与手动码</div>
+  <div class="field">
+    <label>当前日期</label>
+    <div id="wfDate"></div>
+  </div>
+  <div class="weflow-item">
+    <div class="weflow-code" id="wfHmacCode"></div>
+    <button class="btn-green-sm" onclick="copyWf('wfHmacCode')">复制</button>
+  </div>
+  <label>时间激活码(HMAC)</label>
+  <div class="weflow-item">
+    <div class="weflow-code" id="wfManualCode"></div>
+    <button class="btn-green-sm" onclick="copyWf('wfManualCode')">复制</button>
+  </div>
+  <label>手动激活码</label>
+  <div class="btn-row">
+    <button class="btn-primary" onclick="runWfGenerate()">重新生成</button>
+  </div>
+  <div class="tip">算法和Python版本完全一致，浏览器无法跨域获取网络时间</div>
+</div>
+</div>
+
 <script>
-  // 必须与 talkbook/license.py 完全一致
-  // _XOR_KEY = bytes(b ^ 0x5A for b in base64.b64decode("c29tZXNlY3Jld2tleTEyMzQ1"))[:8]
-  // atob("c29tZXNlY3Jld2tleTEyMzQ1") = "somesecretkey12345"
-  const XOR_KEY = Array.from(atob("c29tZXNlY3Jld2tleTEyMzQ1")).map(c => c.charCodeAt(0) ^ 0x5A);
-  const EPOCH = Date.UTC(2025, 0, 1); // 2025-01-01
+// ========== TalkBook 代码 ==========
+const XOR_KEY = Array.from(atob("c29tZXNlY3Jld2tleTEyMzQ1")).map(c => c.charCodeAt(0) ^ 0x5A);
+const EPOCH = Date.UTC(2025, 0, 1); // 2025-01-01
+document.getElementById('activated').value = new Date().toISOString().slice(0, 10);
 
-  // 默认今天
-  document.getElementById('activated').value = new Date().toISOString().slice(0, 10);
+function generateCode(activatedDate, days) {
+  const delta = Math.floor((activatedDate - EPOCH) / 86400000);
+  if (delta < 0) throw new Error("激活日期不能早于 2025-01-01");
+  const plain = new Uint8Array(8);
+  plain[0] = (delta >>> 24) & 0xFF;
+  plain[1] = (delta >>> 16) & 0xFF;
+  plain[2] = (delta >>> 8) & 0xFF;
+  plain[3] = delta & 0xFF;
+  plain[4] = days & 0xFF;
+  const salt = new Uint8Array(3);
+  crypto.getRandomValues(salt);
+  plain[5] = salt[0];
+  plain[6] = salt[1];
+  plain[7] = salt[2];
+  const obf = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) obf[i] = plain[i] ^ XOR_KEY[i % 8];
+  const h = Array.from(obf).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+  return `${h.slice(0,4)}-${h.slice(4,8)}-${h.slice(8,12)}-${h.slice(12,16)}`;
+}
 
-  function generateCode(activatedDate, days) {
-    const delta = Math.floor((activatedDate - EPOCH) / 86400000);
-    if (delta < 0) throw new Error("激活日期不能早于 2025-01-01");
-
-    // 8 字节明文
-    const plain = new Uint8Array(8);
-    // bytes 0-3: days since epoch, uint32 big-endian
-    plain[0] = (delta >>> 24) & 0xFF;
-    plain[1] = (delta >>> 16) & 0xFF;
-    plain[2] = (delta >>> 8) & 0xFF;
-    plain[3] = delta & 0xFF;
-    // byte 4: duration days
-    plain[4] = days & 0xFF;
-    // bytes 5-7: random salt
-    const salt = new Uint8Array(3);
-    crypto.getRandomValues(salt);
-    plain[5] = salt[0];
-    plain[6] = salt[1];
-    plain[7] = salt[2];
-
-    // XOR 混淆
-    const obf = new Uint8Array(8);
-    for (let i = 0; i < 8; i++) obf[i] = plain[i] ^ XOR_KEY[i % 8];
-
-    // hex 大写
-    const h = Array.from(obf).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
-    return `${h.slice(0,4)}-${h.slice(4,8)}-${h.slice(8,12)}-${h.slice(12,16)}`;
+// 一次性生成日卡、周卡、月卡各1个
+function generateAllPlans(){
+  const dateStr = document.getElementById('activated').value;
+  if (!dateStr) { alert('请选择激活日期'); return; }
+  const activatedDate = Date.UTC(
+    parseInt(dateStr.slice(0,4), 10),
+    parseInt(dateStr.slice(5,7), 10) - 1,
+    parseInt(dateStr.slice(8,10), 10)
+  );
+  const planList = [
+    {name:"日卡(1天)", days:1},
+    {name:"周卡(7天)", days:7},
+    {name:"月卡(30天)", days:30}
+  ];
+  const htmlLines = [];
+  const textLines = [];
+  try {
+    planList.forEach(p=>{
+      const code = generateCode(activatedDate, p.days);
+      textLines.push(`${p.name}: ${code}`);
+      htmlLines.push(`<div class="result-item"><span class="code-text">${p.name}: ${code}</span><button class="btn-green-sm" onclick="copyTextSingle('${code}')">复制</button></div>`);
+    })
+  } catch (e) {
+    alert(e.message);
+    return;
   }
+  document.getElementById('result').innerHTML = htmlLines.join('');
+  // 保存纯文本用于【复制全部】
+  document.getElementById('result').dataset.plainText = textLines.join('\n');
+}
 
-  function doGenerate() {
-    const dateStr = document.getElementById('activated').value;
-    const days = parseInt(document.getElementById('plan').value, 10);
-    const count = Math.max(1, Math.min(100, parseInt(document.getElementById('count').value, 10) || 1));
-    if (!dateStr) { alert('请选择激活日期'); return; }
-
-    const activatedDate = Date.UTC(
-      parseInt(dateStr.slice(0,4), 10),
-      parseInt(dateStr.slice(5,7), 10) - 1,
-      parseInt(dateStr.slice(8,10), 10)
-    );
-
-    const lines = [];
-    try {
-      for (let i = 0; i < count; i++) {
-        lines.push(generateCode(activatedDate, days));
-      }
-    } catch (e) {
-      alert(e.message);
-      return;
+function doGenerate() {
+  const dateStr = document.getElementById('activated').value;
+  const days = parseInt(document.getElementById('plan').value, 10);
+  const count = Math.max(1, Math.min(100, parseInt(document.getElementById('count').value, 10) || 1));
+  if (!dateStr) { alert('请选择激活日期'); return; }
+  const activatedDate = Date.UTC(
+    parseInt(dateStr.slice(0,4), 10),
+    parseInt(dateStr.slice(5,7), 10) - 1,
+    parseInt(dateStr.slice(8,10), 10)
+  );
+  const htmlLines = [];
+  const textLines = [];
+  try {
+    for (let i = 0; i < count; i++) {
+      const code = generateCode(activatedDate, days);
+      textLines.push(code);
+      htmlLines.push(`<div class="result-item"><span class="code-text">${code}</span><button class="btn-green-sm" onclick="copyTextSingle('${code}')">复制</button></div>`);
     }
-    document.getElementById('result').textContent = lines.join('\n');
+  } catch (e) {
+    alert(e.message);
+    return;
   }
+  document.getElementById('result').innerHTML = htmlLines.join('');
+  document.getElementById('result').dataset.plainText = textLines.join('\n');
+}
 
-  function copyAll() {
-    const text = document.getElementById('result').textContent.trim();
-    if (!text) { alert('还没有生成任何激活码'); return; }
-    navigator.clipboard.writeText(text).then(
-      () => alert('已复制到剪贴板'),
-      () => {
-        // fallback
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        alert('已复制到剪贴板');
-      }
-    );
+// 单条激活码复制
+async function copyTextSingle(text){
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("✅ 复制成功："+text);
+  } catch(err){
+    alert("❌ 复制失败，请手动选中复制");
   }
+}
+
+function copyAll() {
+  const text = document.getElementById('result').dataset.plainText || document.getElementById('result').textContent.trim();
+  if (!text) { alert('还没有生成任何激活码'); return; }
+  navigator.clipboard.writeText(text).then(
+    () => alert('已复制全部到剪贴板'),
+    () => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      alert('已复制全部到剪贴板');
+    }
+  );
+}
+
+// ========== WeFlow 代码 ==========
+const SECRET_KEY = "weflow2026secret";
+const MANUAL_PREFIX = "1037";
+const CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateHmacKey(secretKey, dateStr){
+    const hmacSha256 = CryptoJS.HmacSHA256(dateStr, secretKey);
+    const hexStr = hmacSha256.toString(CryptoJS.enc.Hex);
+    let codeChars = [];
+    for(let i=0;i<40;i+=2){
+        const twoHex = hexStr.substring(i,i+2);
+        const val = parseInt(twoHex,16);
+        codeChars.push(CHARS[val % CHARS.length]);
+    }
+    const code = codeChars.join('');
+    const formatted = `${code.slice(0,5)}-${code.slice(5,10)}-${code.slice(10,15)}-${code.slice(15,20)}`;
+    return formatted;
+}
+function generateManualKey(month, day){
+    const mStr = String(month +1).padStart(2,'0');
+    const dStr = String(day -1).padStart(2,'0');
+    return MANUAL_PREFIX + mStr + dStr;
+}
+function runWfGenerate(){
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const month = now.getMonth()+1;
+    const day = now.getDate();
+
+    const hmacCode = generateHmacKey(SECRET_KEY, todayStr);
+    const manualCode = generateManualKey(month, day);
+
+    document.getElementById("wfDate").innerText = todayStr;
+    document.getElementById("wfHmacCode").innerText = hmacCode;
+    document.getElementById("wfManualCode").innerText = manualCode;
+}
+async function copyWf(elementId){
+    const text = document.getElementById(elementId).innerText;
+    try {
+        await navigator.clipboard.writeText(text);
+        alert("✅ 复制成功："+text);
+    } catch(err){
+        alert("❌ 复制失败，请手动选中复制");
+    }
+}
+
+// 页面加载时：自动生成TalkBook全套 + WeFlow
+window.onload = function(){
+  generateAllPlans();
+  runWfGenerate();
+};
 </script>
 </body>
 </html>
