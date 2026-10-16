@@ -186,7 +186,19 @@
 // ========== TalkBook 代码 ==========
 const XOR_KEY = Array.from(atob("c29tZXNlY3Jld2tleTEyMzQ1")).map(c => c.charCodeAt(0) ^ 0x5A);
 const EPOCH = Date.UTC(2025, 0, 1); // 2025-01-01
-document.getElementById('activated').value = new Date().toISOString().slice(0, 10);
+
+// 北京时间的“今天”（与 talkbook/license.py 按本地/网络日期判定一致）
+// 不能用 toISOString()，它返回 UTC 日期，北京时间 00:00–08:00 期间会取成“昨天”
+function beijingDateParts() {
+  const p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const get = t => (p.find(x => x.type === t) || {}).value;
+  return { y: parseInt(get('year'), 10), m: parseInt(get('month'), 10), d: parseInt(get('day'), 10) };
+}
+function beijingDateStr() {
+  const { y, m, d } = beijingDateParts();
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+document.getElementById('activated').value = beijingDateStr();
 
 function generateCode(activatedDate, days) {
   const delta = Math.floor((activatedDate - EPOCH) / 86400000);
@@ -316,10 +328,10 @@ function generateManualKey(month, day){
     return MANUAL_PREFIX + mStr + dStr;
 }
 function runWfGenerate(){
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    const month = now.getMonth()+1;
-    const day = now.getDate();
+    const parts = beijingDateParts();
+    const todayStr = `${parts.y}-${String(parts.m).padStart(2, '0')}-${String(parts.d).padStart(2, '0')}`;
+    const month = parts.m;
+    const day = parts.d;
 
     const hmacCode = generateHmacKey(SECRET_KEY, todayStr);
     const manualCode = generateManualKey(month, day);
